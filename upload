@@ -1,0 +1,97 @@
+const path = require('path');
+const fs = require('fs-extra');
+const multer = require('multer');
+
+// Multer Storage Setup
+const storage = multer.diskStorage({
+    destination: './uploads/',
+    filename: (req, file, cb) => {
+        cb(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));
+    }
+});
+const upload = multer({ storage });
+
+// ✅ OCR File Upload & Credit Deduction
+app.post('/upload', upload.single('image'), async (req, res) => {
+    const { userId } = req.body;
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+
+    try {
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        if (user.credits < 5) {
+            return res.status(400).json({ message: "Not enough credits. Please wait 24 hours or recharge." });
+        }
+
+        user.credits -= 5;
+        await user.save();
+
+        res.json({ message: "File uploaded successfully!", filePath: req.file.path, remainingCredits: user.credits });
+    } catch (error) {
+        res.status(500).json({ message: "Error processing file", error });
+    }
+});
+const Tesseract = require('tesseract.js');
+
+app.post('/upload', upload.single('image'), async (req, res) => {
+    const { userId } = req.body;
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+
+    try {
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        if (user.credits < 5) {
+            return res.status(400).json({ message: "Not enough credits. Please wait 24 hours or recharge." });
+        }
+
+        user.credits -= 5;
+        await user.save();
+
+        // Perform OCR
+        const { data: { text } } = await Tesseract.recognize(req.file.path, 'eng');
+
+        res.json({ message: "File processed successfully!", extractedText: text, remainingCredits: user.credits });
+    } catch (error) {
+        res.status(500).json({ message: "Error processing file", error });
+    }
+});
+const similarity = (text1, text2) => {
+    const words1 = new Set(text1.split(/\s+/));
+    const words2 = new Set(text2.split(/\s+/));
+    const intersection = new Set([...words1].filter(word => words2.has(word)));
+    return intersection.size / Math.sqrt(words1.size * words2.size);
+};
+
+app.post('/upload', upload.single('image'), async (req, res) => {
+    const { userId } = req.body;
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+
+    try {
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        if (user.credits < 5) return res.status(400).json({ message: "Not enough credits." });
+
+        user.credits -= 5;
+        await user.save();
+
+        const { data: { text } } = await Tesseract.recognize(req.file.path, 'eng');
+
+        const newDoc = new Document({ userId, text });
+        await newDoc.save();
+
+        // Find 5 most similar documents
+        const allDocs = await Document.find({ userId: { $ne: userId } });
+        const similarDocs = allDocs.map(doc => ({
+            id: doc._id,
+            similarity: similarity(text, doc.text),
+        })).sort((a, b) => b.similarity - a.similarity).slice(0, 5);
+
+        res.json({ message: "File processed!", extractedText: text, similarDocs, remainingCredits: user.credits });
+
+    } catch (error) {
+        res.status(500).json({ message: "Error processing file", error });
+    }
+});
